@@ -13,23 +13,6 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 from dotenv import load_dotenv
 
-from langchain_huggingface import HuggingFaceEmbeddings
-# pyrefly: ignore [missing-import]
-from langchain_community.vectorstores import Chroma
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_community.chat_message_histories import ChatMessageHistory
-# pyrefly: ignore [missing-import]
-from langchain_classic.chains import create_history_aware_retriever, create_retrieval_chain
-# pyrefly: ignore [missing-import]
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-
-# Using Groq for Llama 3
-# pyrefly: ignore [missing-import]
-from langchain_groq import ChatGroq
-
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 app = FastAPI(title="Perfume Chatbot API")
@@ -64,8 +47,21 @@ def get_models():
     print("Loading models...")
     global embeddings, vectorstore, llm, retriever, chain
     if vectorstore is None:
+        # Local imports moved here to reduce startup memory and avoid import-time failures
+        from langchain_huggingface import HuggingFaceEmbeddings
+        # pyrefly: ignore [missing-import]
+        from langchain_community.vectorstores import Chroma
+        from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+        from langchain_core.runnables.history import RunnableWithMessageHistory
+        # pyrefly: ignore [missing-import]
+        from langchain_classic.chains import create_history_aware_retriever, create_retrieval_chain
+        # pyrefly: ignore [missing-import]
+        from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+        # Using Groq for Llama 3
+        # pyrefly: ignore [missing-import]
+        from langchain_groq import ChatGroq
+
         print("Creating embeddings...")
-        # Initialize embeddings
         model_kwargs = {'device': 'cpu'}
         encode_kwargs = {'normalize_embeddings': False}
         embeddings = HuggingFaceEmbeddings(
@@ -75,15 +71,12 @@ def get_models():
         )
         
         print("Loading Chroma...")
-        # Load Chroma DB
         vectorstore = Chroma(
             persist_directory=persist_directory,
             embedding_function=embeddings
         )
         retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
 
-        # Initialize LLM
-        # Ensure CHAT_LLM_API_KEY is set to your Groq API Key in .env
         api_key = os.getenv("CHAT_LLM_API_KEY")
         if not api_key:
             raise Exception("CHAT_LLM_API_KEY is not set in environment")
@@ -95,7 +88,6 @@ def get_models():
             temperature=0.7
         )
 
-        # Setup conversational retrieval prompts
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "
             "which might reference context in the chat history, "
@@ -133,7 +125,6 @@ Context: {context}"""
             ("human", "{input}"),
         ])
 
-        # Chains
         history_aware_retriever = create_history_aware_retriever(
             llm, retriever, contextualize_q_prompt
         )
@@ -222,6 +213,10 @@ async def chat_endpoint(req: ChatRequest):
         return ChatResponse(reply=response["answer"])
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn
