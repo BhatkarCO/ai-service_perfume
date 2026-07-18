@@ -214,9 +214,20 @@ async def chat_endpoint(req: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/")
+async def root():
+    return {
+        "status": "ok",
+        "message": "Perfume Chatbot API is running. Use /health or /chat.",
+    }
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+@app.get("/favicon.ico")
+async def favicon():
+    return ""
 
 if __name__ == "__main__":
     import uvicorn
