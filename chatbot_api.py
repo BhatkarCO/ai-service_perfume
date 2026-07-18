@@ -6,6 +6,7 @@ try:
 except ImportError:
     pass
 
+import asyncio
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -204,11 +205,13 @@ async def chat_endpoint(req: ChatRequest):
     global chain
     if chain is None:
         get_models()
-        
+
     try:
-        response = chain.invoke(
-            {"input": req.message},
-            config={"configurable": {"session_id": req.session_id}}
+        response = await asyncio.to_thread(
+            lambda: chain.invoke(
+                {"input": req.message},
+                config={"configurable": {"session_id": req.session_id}}
+            )
         )
         return ChatResponse(reply=response["answer"])
     except Exception as e:
