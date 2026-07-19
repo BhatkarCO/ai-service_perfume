@@ -203,8 +203,15 @@ async def embed_product(product: ProductDetails):
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
     global chain
+
     if chain is None:
-        get_models()
+        try:
+            print("Loading models...")
+            get_models()
+            print("Models loaded successfully.")
+        except Exception as e:
+            print("MODEL LOADING FAILED:", str(e))
+            raise
 
     try:
         response = await asyncio.to_thread(
@@ -214,7 +221,10 @@ async def chat_endpoint(req: ChatRequest):
             )
         )
         return ChatResponse(reply=response["answer"])
+
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
