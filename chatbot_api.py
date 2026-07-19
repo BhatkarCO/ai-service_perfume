@@ -1,11 +1,3 @@
-print("===== CHATBOT_API IMPORTED =====")
-try:
-    __import__('pysqlite3')
-    import sys
-    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-except ImportError:
-    pass
-
 import asyncio
 import os
 from fastapi import FastAPI, HTTPException
@@ -13,6 +5,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from dotenv import load_dotenv
+
+from langchain_huggingface import HuggingFaceEmbeddings
+# pyrefly: ignore [missing-import]
+from langchain_community.vectorstores import Chroma
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory
+# pyrefly: ignore [missing-import]
+from langchain_classic.chains import create_history_aware_retriever, create_retrieval_chain
+# pyrefly: ignore [missing-import]
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+
+# Using Groq for Llama 3
+# pyrefly: ignore [missing-import]
+from langchain_groq import ChatGroq
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
@@ -45,65 +54,63 @@ def get_session_history(session_id: str):
     return chat_histories[session_id]
 
 def get_models():
-    print("Loading models...")
     global embeddings, vectorstore, llm, retriever, chain
-    if vectorstore is None:
-        # Local imports moved here to reduce startup memory and avoid import-time failures
-        from langchain_huggingface import HuggingFaceEmbeddings
-        # pyrefly: ignore [missing-import]
-        from langchain_community.vectorstores import Chroma
-        from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-        from langchain_core.runnables.history import RunnableWithMessageHistory
-        # pyrefly: ignore [missing-import]
-        from langchain_classic.chains import create_history_aware_retriever, create_retrieval_chain
-        # pyrefly: ignore [missing-import]
-        from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-        # Using Groq for Llama 3
-        # pyrefly: ignore [missing-import]
-        from langchain_groq import ChatGroq
 
-        print("Creating embeddings...")
-        model_kwargs = {'device': 'cpu'}
-        encode_kwargs = {'normalize_embeddings': False}
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs=model_kwargs,
-            encode_kwargs=encode_kwargs
-        )
-        
-        print("Loading Chroma...")
-        vectorstore = Chroma(
-            persist_directory=persist_directory,
-            embedding_function=embeddings
-        )
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+    if chain is not None:
+        return
 
-        api_key = os.getenv("CHAT_LLM_API_KEY")
-        if not api_key:
-            raise Exception("CHAT_LLM_API_KEY is not set in environment")
-        
-        print("Creating Groq client...")
-        llm = ChatGroq(
-            model_name="llama-3.3-70b-versatile",
-            groq_api_key=api_key,
-            temperature=0.7
-        )
+    print("STEP 1 - Creating embeddings", flush=True)
 
-        contextualize_q_system_prompt = (
-            "Given a chat history and the latest user question "
-            "which might reference context in the chat history, "
-            "formulate a standalone question which can be understood "
-            "without the chat history. Do NOT answer the question, "
-            "just reformulate it if needed and otherwise return it as is."
-        )
-        
-        contextualize_q_prompt = ChatPromptTemplate.from_messages([
-            ("system", contextualize_q_system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"),
-        ])
+    model_kwargs = {"device": "cpu"}
+    encode_kwargs = {"normalize_embeddings": False}
 
-        qa_system_prompt = """You are a helpful, passionate, and knowledgeable perfume assistant.
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_kwargs=model_kwargs,
+        encode_kwargs=encode_kwargs,
+    )
+
+    print("STEP 2 - Embeddings loaded", flush=True)
+
+    vectorstore = Chroma(
+        persist_directory=persist_directory,
+        embedding_function=embeddings,
+    )
+
+    print("STEP 3 - Chroma loaded", flush=True)
+
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+    print("STEP 4 - Retriever ready", flush=True)
+
+    api_key = os.getenv("CHAT_LLM_API_KEY")
+
+    if not api_key:
+        raise Exception("CHAT_LLM_API_KEY missing")
+
+    llm = ChatGroq(
+        model_name="llama-3.3-70b-versatile",
+        groq_api_key=api_key,
+        temperature=0.7,
+    )
+
+    print("STEP 5 - Groq ready", flush=True)
+
+    # Setup conversational retrieval prompts
+    contextualize_q_system_prompt = (
+        "Given a chat history and the latest user question "
+        "which might reference context in the chat history, "
+        "formulate a standalone question which can be understood "
+        "without the chat history. Do NOT answer the question, "
+        "just reformulate it if needed and otherwise return it as is."
+    )
+    
+    contextualize_q_prompt = ChatPromptTemplate.from_messages([
+        ("system", contextualize_q_system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+    ])
+    qa_system_prompt = """You are a helpful, passionate, and knowledgeable perfume assistant.
 Use the following pieces of context to answer the user's question.
 If you don't know the answer, just say that you don't know, don't try to make up an answer.
 Make the answer descriptive, engaging, and well-formatted, but keep it under 100 words.
@@ -120,25 +127,24 @@ CRITICAL RULES:
 
 Context: {context}"""
 
-        qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", qa_system_prompt),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"),
-        ])
-
-        history_aware_retriever = create_history_aware_retriever(
-            llm, retriever, contextualize_q_prompt
-        )
-        question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
-        rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-
-        chain = RunnableWithMessageHistory(
-            rag_chain,
-            get_session_history,
-            input_messages_key="input",
-            history_messages_key="chat_history",
-            output_messages_key="answer",
-        )
+    qa_prompt = ChatPromptTemplate.from_messages([
+        ("system", qa_system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+    ])
+    # Chains
+    history_aware_retriever = create_history_aware_retriever(
+        llm, retriever, contextualize_q_prompt
+    )
+    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+    chain = RunnableWithMessageHistory(
+        rag_chain,
+        get_session_history,
+        input_messages_key="input",
+        history_messages_key="chat_history",
+        output_messages_key="answer",
+    )
 
 # Data Models
 class ProductDetails(BaseModel):
@@ -156,16 +162,21 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
 
-# @app.on_event("startup")
-# async def startup_event():
-#     try:
-#         # Only initialize if the DB exists
-#         if os.path.exists(persist_directory):
-#             get_models()
-#         else:
-#             print("Warning: Chroma DB not initialized. Please run init_db.py first.")
-#     except Exception as e:
-#         print(f"Failed to initialize models: {e}")
+@app.on_event("startup")
+async def startup_event():
+    print("========== AI SERVICE STARTING ==========", flush=True)
+
+    if not os.path.exists(persist_directory):
+        print(f"ERROR: Chroma DB not found: {persist_directory}", flush=True)
+        return
+
+    try:
+        print("Loading AI models...", flush=True)
+        get_models()
+        print("AI models loaded successfully.", flush=True)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
 
 @app.post("/embed_product")
 async def embed_product(product: ProductDetails):
@@ -202,47 +213,48 @@ async def embed_product(product: ProductDetails):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
+
     global chain
 
-    if chain is None:
-        try:
-            print("Loading models...")
-            get_models()
-            print("Models loaded successfully.")
-        except Exception as e:
-            print("MODEL LOADING FAILED:", str(e))
-            raise
-
     try:
+
+        if chain is None:
+            print("Chain not initialized. Loading...", flush=True)
+            get_models()
+
+        import asyncio
         response = await asyncio.to_thread(
             lambda: chain.invoke(
                 {"input": req.message},
-                config={"configurable": {"session_id": req.session_id}}
+                config={
+                    "configurable": {
+                        "session_id": req.session_id
+                    }
+                }
             )
         )
-        return ChatResponse(reply=response["answer"])
+
+        return ChatResponse(
+            reply=response["answer"]
+        )
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/")
-async def root():
-    return {
-        "status": "ok",
-        "message": "Perfume Chatbot API is running. Use /health or /chat.",
-    }
-
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
-
-@app.get("/favicon.ico")
-async def favicon():
-    return ""
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 if __name__ == "__main__":
     import uvicorn
+    
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port
+    )
