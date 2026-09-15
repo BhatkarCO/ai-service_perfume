@@ -1,0 +1,47 @@
+# ===================================================
+# Chatbot & AI Services Git Ignore
+# ===================================================
+
+# Test & Preview HTML Files
+*.html
+ai_serivices/*.html
+ai_serivices/chat_test.html
+ai_serivices/index.html
+
+# Environment Variables & Secrets
+.env
+.env.*
+*.env
+ai_serivices/.env
+
+# Python Virtual Environments
+venv/
+env/
+ENV/
+ai_serivices/venv/
+ai_serivices/env/
+
+# Python Cache & Bytecode
+__pycache__/
+ai_serivices/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Chroma Vector Database & Local Indexes
+chroma_db/
+ai_serivices/chroma_db/
+*.sqlite3
+
+# Logs & Temporary Files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Editor Metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
