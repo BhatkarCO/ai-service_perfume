@@ -73,7 +73,11 @@ def get_models():
             persist_directory=persist_directory,
             embedding_function=embeddings
         )
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
+
+        print("===== CHROMA DATABASE =====")
+        print("Documents in Chroma:", vectorstore._collection.count())
+        print("============================") 
 
         # Initialize LLM
         # Ensure CHAT_LLM_API_KEY is set to your Groq API Key in .env
@@ -253,6 +257,23 @@ async def chat_endpoint(req: ChatRequest):
         get_models()
         
     try:
+        print("\n===== USER QUERY =====")
+        print(req.message)
+    
+        debug_docs = vectorstore.similarity_search(
+            req.message,
+            k=6
+        )
+    
+        print(f"===== RETRIEVED {len(debug_docs)} DOCUMENTS =====")
+    
+        for i, doc in enumerate(debug_docs, 1):
+            print(f"\n--- DOCUMENT {i} ---")
+            print(doc.page_content[:1200])
+            print("Metadata:", doc.metadata)
+    
+        print("===== END RETRIEVAL =====\n")
+    
         response = chain.invoke(
             {"input": req.message},
             config={"configurable": {"session_id": req.session_id}}
